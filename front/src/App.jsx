@@ -1,7 +1,5 @@
 import { useState } from "react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
-
 const App = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [error, setError] = useState(null);
@@ -37,9 +35,9 @@ const App = () => {
         formData.append("splitLength", splitLength.toString());
       }
 
-      const endpoint = mode === "simple" ? "/api/count" : "/api/count-segments";
+      const endpoint = mode === "simple" ? "/count" : "/count-segments";
 
-      const response = await fetch(`${API_URL}${endpoint}`, {
+      const response = await fetch(`http://localhost:3000${endpoint}`, {
         method: "POST",
         body: formData,
       });
