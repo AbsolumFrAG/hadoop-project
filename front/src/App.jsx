@@ -5,7 +5,7 @@ const App = () => {
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [splitLength, setSplitLength] = useState(3);
+  const [spacingLength, setSpacingLength] = useState(3);
   const [selectedSegment, setSelectedSegment] = useState(0);
   const [mode, setMode] = useState("simple");
 
@@ -31,11 +31,8 @@ const App = () => {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      if (mode === "segments") {
-        formData.append("splitLength", splitLength.toString());
-      }
-
-      const endpoint = mode === "simple" ? "/count" : "/count-segments";
+      const endpoint =
+        mode === "simple" ? "/count" : `/space-and-count/${spacingLength}`;
 
       const response = await fetch(`http://localhost:3000${endpoint}`, {
         method: "POST",
@@ -81,11 +78,11 @@ const App = () => {
           </button>
           <button
             onClick={() => {
-              setMode("segments");
+              setMode("spacing");
               setResults(null);
             }}
             className={`px-4 py-2 rounded-md ${
-              mode === "segments"
+              mode === "spacing"
                 ? "bg-blue-600 text-white"
                 : "bg-gray-200 text-gray-700 hover:bg-gray-300"
             }`}
@@ -106,14 +103,14 @@ const App = () => {
                       text-gray-600"
           />
 
-          {mode === "segments" && (
+          {mode === "spacing" && (
             <input
               type="number"
-              value={splitLength}
-              onChange={(e) => setSplitLength(parseInt(e.target.value))}
+              value={spacingLength}
+              onChange={(e) => setSpacingLength(parseInt(e.target.value))}
               min="1"
               className="px-3 py-2 border rounded-md w-32"
-              placeholder="Taille segment"
+              placeholder="Espacement"
             />
           )}
 
@@ -136,7 +133,7 @@ const App = () => {
 
       {results && (
         <div className="mt-6">
-          {mode === "segments" && (
+          {mode === "spacing" && (
             <div className="mb-4">
               <h3 className="text-lg font-semibold mb-2">Segments</h3>
               <div className="flex flex-wrap gap-2">
@@ -158,7 +155,7 @@ const App = () => {
           )}
 
           <div className="bg-white shadow rounded-lg overflow-hidden">
-            {mode === "segments" && (
+            {mode === "spacing" && (
               <div className="px-4 py-3 bg-gray-50 border-b">
                 <h4 className="font-medium">
                   Segment {selectedSegment + 1}
@@ -219,7 +216,7 @@ const App = () => {
                 </p>
               </>
             )}
-            {mode === "segments" && (
+            {mode === "spacing" && (
               <>
                 <p>Nombre total de segments : {results.totalSegments}</p>
                 <p>Taille des segments : {results.segmentLength} caractères</p>

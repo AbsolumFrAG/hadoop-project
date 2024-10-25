@@ -44,35 +44,85 @@ app.post("/count", upload.single("file"), async (req, res) => {
   }
 });
 
-app.post("/count-segments", upload.single("file"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "Aucun fichier envoyé" });
+app.post(
+  "/space-and-count/:spacing",
+  upload.single("file"),
+  async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "Aucun fichier envoyé" });
+    }
+
+    const spacing = parseInt(req.params.spacing);
+    if (isNaN(spacing) || spacing <= 0) {
+      return res
+        .status(400)
+        .json({ error: "Le paramètre d'espacement est invalide" });
+    }
+
+    const inputFile = req.file.path;
+    const modifiedFile = inputFile + "_modified";
+
+    try {
+      const content = fs.readFileSync(inputFile, "utf8");
+
+      let modifiedContent = "";
+      for (let i = 0; i < content.length; i++) {
+        modifiedContent += content[i];
+        if ((i + 1) % spacing === 0 && i < content.length - 1) {
+          modifiedContent += " ";
+        }
+      }
+
+      fs.writeFileSync(modifiedFile, modifiedContent);
+
+      const hdfsInputPath = "/wordcount/modified-input";
+      const hdfsOutputPath = "/wordcount/modified-output";
+
+      await executeCommand(
+        `hdfs dfs -rm -r ${hdfsInputPath} ${hdfsOutputPath}`
+      ).catch(() => {});
+      await executeCommand(`hdfs dfs -mkdir -p ${hdfsInputPath}`);
+      await executeCommand(`hdfs dfs -put ${modifiedFile} ${hdfsInputPath}`);
+      await executeCommand(
+        `hadoop jar /opt/homebrew/Cellar/hadoop/3.4.0/libexec/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.4.0.jar wordcount ${hdfsInputPath} ${hdfsOutputPath}`
+      );
+
+      const resultFile = "modified_result.txt";
+      await executeCommand(
+        `hdfs dfs -get ${hdfsOutputPath}/part-r-00000 ${resultFile}`
+      );
+
+      const results = fs
+        .readFileSync(resultFile, "utf8")
+        .split("\n")
+        .filter((line) => line.trim())
+        .map((line) => {
+          const [word, count] = line.split("\t");
+          return { word, count: parseInt(count) };
+        });
+
+      await executeCommand(
+        `hdfs dfs -rm -r ${hdfsInputPath} ${hdfsOutputPath}`
+      );
+      fs.unlinkSync(resultFile);
+      fs.unlinkSync(inputFile);
+      fs.unlinkSync(modifiedFile);
+
+      res.json({
+        results,
+        originalContent: content,
+        modifiedContent: modifiedContent,
+      });
+    } catch (error) {
+      console.error("Erreur:", error);
+
+      if (fs.existsSync(inputFile)) fs.unlinkSync(inputFile);
+      if (fs.existsSync(modifiedFile)) fs.unlinkSync(modifiedFile);
+
+      res.status(500).json({ error: "Erreur lors du traitement du fichier" });
+    }
   }
-
-  const splitLength = parseInt(req.body.splitLength) || 3;
-  const inputFile = req.file.path;
-
-  try {
-    const content = fs.readFileSync(inputFile, "utf8");
-    const segments = splitIntoSegments(content, splitLength);
-
-    const segmentedContent = segments.join("\n---\n");
-    fs.writeFileSync(inputFile, segmentedContent);
-
-    const results = await processSegmentedWordCount(inputFile, segments.length);
-
-    fs.unlinkSync(inputFile);
-
-    res.json({
-      totalSegments: segments.length,
-      segmentLength: splitLength,
-      results: results,
-    });
-  } catch (error) {
-    console.error("Erreur:", error);
-    res.status(500).json({ error: "Erreur lors du traitement du fichier" });
-  }
-});
+);
 
 function executeCommand(command) {
   return new Promise((resolve, reject) => {
@@ -125,68 +175,6 @@ async function processWordCount(inputFile) {
   }
 }
 
-async function processSegmentedWordCount(inputFile, numSegments) {
-  const hdfsInputPath = "/wordcount/input";
-  const hdfsOutputPath = "/wordcount/output";
-
-  try {
-    await executeCommand(
-      `hdfs dfs -rm -r ${hdfsInputPath} ${hdfsOutputPath}`
-    ).catch(() => {});
-    await executeCommand(`hdfs dfs -mkdir -p ${hdfsInputPath}`);
-    await executeCommand(`hdfs dfs -put ${inputFile} ${hdfsInputPath}`);
-
-    await executeCommand(
-      `hadoop jar /opt/homebrew/Cellar/hadoop/3.4.0/libexec/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.4.0.jar wordcount ${hdfsInputPath} ${hdfsOutputPath}`
-    );
-
-    const resultFile = "result.txt";
-    await executeCommand(
-      `hdfs dfs -get ${hdfsOutputPath}/part-r-00000 ${resultFile}`
-    );
-
-    const results = [];
-    const fileContent = fs.readFileSync(resultFile, "utf8");
-    const wordCounts = new Map();
-
-    fileContent.split("\n").forEach((line) => {
-      if (line.trim()) {
-        const [word, count] = line.split("\t");
-        wordCounts.set(word, parseInt(count));
-      }
-    });
-
-    for (let i = 0; i < numSegments; i++) {
-      const segmentWords = [];
-      for (const [word, count] of wordCounts.entries()) {
-        if (count > 0) {
-          segmentWords.push({ word, count });
-        }
-      }
-      results.push({
-        segmentIndex: i,
-        wordCount: segmentWords,
-      });
-    }
-
-    await executeCommand(`hdfs dfs -rm -r ${hdfsInputPath} ${hdfsOutputPath}`);
-    fs.unlinkSync(resultFile);
-
-    return results;
-  } catch (error) {
-    console.error("Erreur lors du traitement des segments:", error);
-    throw error;
-  }
-}
-
-function splitIntoSegments(content, length) {
-  const segments = [];
-  for (let i = 0; i < content.length; i += length) {
-    segments.push(content.slice(i, i + length));
-  }
-  return segments;
-}
-
 app.listen(port, () => {
-  console.log(`Serveur démarré sur le port ${port}`);
-});
+  console.log(`Server running on port ${port}`);
+})
