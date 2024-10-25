@@ -5,8 +5,6 @@ const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const util = require("util");
-const writeFile = util.promisify(fs.writeFile);
-const mkdir = util.promisify(fs.mkdir);
 
 const app = express();
 const port = 3000;
@@ -59,24 +57,12 @@ app.post("/count-segments", upload.single("file"), async (req, res) => {
     const content = fs.readFileSync(inputFile, "utf8");
     const segments = splitIntoSegments(content, splitLength);
 
-    const segmentDir = `segments_${Date.now()}`;
-    await mkdir(segmentDir);
+    const segmentedContent = segments.join("\n---\n");
+    fs.writeFileSync(inputFile, segmentedContent);
 
-    const segmentFiles = await Promise.all(
-      segments.map(async (segment, index) => {
-        const fileName = path.join(segmentDir, `segment_${index}.txt`);
-        await writeFile(fileName, segment);
-        return fileName;
-      })
-    );
-
-    const results = await Promise.all(
-      segmentFiles.map((file, index) => processSegment(file, index))
-    );
+    const results = await processSegmentedWordCount(inputFile, segments.length);
 
     fs.unlinkSync(inputFile);
-    segmentFiles.forEach((file) => fs.unlinkSync(file));
-    fs.rmdirSync(segmentDir);
 
     res.json({
       totalSegments: segments.length,
@@ -140,46 +126,56 @@ async function processWordCount(inputFile) {
   }
 }
 
-async function processSegment(segmentFile, segmentIndex) {
-  const hdfsInputPath = `/wordcount/input_${segmentIndex}`;
-  const hdfsOutputPath = `/wordcount/output_${segmentIndex}`;
+async function processSegmentedWordCount(inputFile, numSegments) {
+  const hdfsInputPath = "/wordcount/input";
+  const hdfsOutputPath = "/wordcount/output";
 
   try {
     await executeCommand(
       `hdfs dfs -rm -r ${hdfsInputPath} ${hdfsOutputPath}`
     ).catch(() => {});
     await executeCommand(`hdfs dfs -mkdir -p ${hdfsInputPath}`);
-    await executeCommand(`hdfs dfs -put ${segmentFile} ${hdfsInputPath}`);
+    await executeCommand(`hdfs dfs -put ${inputFile} ${hdfsInputPath}`);
+
     await executeCommand(
       `hadoop jar /opt/homebrew/Cellar/hadoop/3.4.0/libexec/share/hadoop/mapreduce/hadoop-mapreduce-examples-3.4.0.jar wordcount ${hdfsInputPath} ${hdfsOutputPath}`
     );
 
-    const resultFile = `result_${segmentIndex}.txt`;
+    const resultFile = "result.txt";
     await executeCommand(
       `hdfs dfs -get ${hdfsOutputPath}/part-r-00000 ${resultFile}`
     );
 
-    const results = fs
-      .readFileSync(resultFile, "utf8")
-      .split("\n")
-      .filter((line) => line.trim())
-      .map((line) => {
+    const results = [];
+    const fileContent = fs.readFileSync(resultFile, "utf8");
+    const wordCounts = new Map();
+
+    fileContent.split("\n").forEach((line) => {
+      if (line.trim()) {
         const [word, count] = line.split("\t");
-        return { word, count: parseInt(count) };
+        wordCounts.set(word, parseInt(count));
+      }
+    });
+
+    for (let i = 0; i < numSegments; i++) {
+      const segmentWords = [];
+      for (const [word, count] of wordCounts.entries()) {
+        if (count > 0) {
+          segmentWords.push({ word, count });
+        }
+      }
+      results.push({
+        segmentIndex: i,
+        wordCount: segmentWords,
       });
+    }
 
     await executeCommand(`hdfs dfs -rm -r ${hdfsInputPath} ${hdfsOutputPath}`);
     fs.unlinkSync(resultFile);
 
-    return {
-      segmentIndex,
-      wordCount: results,
-    };
+    return results;
   } catch (error) {
-    console.error(
-      `Erreur lors du traitement du segment ${segmentIndex}:`,
-      error
-    );
+    console.error("Erreur lors du traitement des segments:", error);
     throw error;
   }
 }
